@@ -35,6 +35,7 @@ exports.register = async (req, res) => {
       token: generateToken(user._id),
     });
   } catch (error) {
+    console.log(error)
     res.status(500).json({error, message: 'Server Error' });
   }
 };
@@ -45,7 +46,7 @@ exports.register = async (req, res) => {
 exports.login = async (req, res) => {
   const { email, password } = req.body;
   try {
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).select("+password");
     if (!user) return res.status(400).json({ message: 'Invalid credentials' });
 
     const isMatch = await bcrypt.compare(password, user.password);
@@ -58,6 +59,7 @@ exports.login = async (req, res) => {
       token: generateToken(user._id),
     });
   } catch (error) {
+    console.log(error)
     res.status(500).json({error, message: 'Server Error' });
   }
 };
