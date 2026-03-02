@@ -18,4 +18,5 @@ const leadSchema = new mongoose.Schema({
 leadSchema.index({ assignedTo: 1, status: 1 });
 leadSchema.index({ nextFollowUpAt: 1 });
 
+
 module.exports = mongoose.model('Lead', leadSchema);

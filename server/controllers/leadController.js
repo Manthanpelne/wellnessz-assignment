@@ -1,6 +1,7 @@
+const redisClient = require('../config/redis');
 const Activity = require('../models/Activity');
 const Lead = require('../models/Lead');
-
+const geminiService = require("../services/geminiService")
 
 // CREATE LEAD
 exports.createLead = async (req, res) => {
@@ -132,9 +133,111 @@ exports.getTimeline = async (req, res) => {
     const nextCursor = activities.length > 0 
       ? activities[activities.length - 1]._id 
       : null;
-
     res.json({ activities, nextCursor });
   } catch (error) {
     res.status(500).json({ message: 'Error fetching timeline' });
   }
 };
+
+
+
+
+//gemini api integration
+exports.generateAIContent = async (req, res) => {
+  try {
+    const lead = await Lead.findById(req.params.id);
+    
+    // Getting last 3 activities for context
+    const history = await Activity.find({ leadId: lead._id })
+      .sort({ createdAt: -1 })
+      .limit(3);
+
+    // Call Gemini Service
+    const aiOutput = await geminiService.generateFollowUp(lead, history);
+
+    // Logging the AI activity
+    await Activity.create({
+      leadId: lead._id,
+      type: 'AI_MESSAGE_GENERATED',
+      meta: { aiResponse: aiOutput }
+    });
+
+    res.json(aiOutput);
+  } catch (error) {
+    console.log("ai error",error)
+    res.status(500).json({ message: "AI Generation failed", error: error.message });
+  }
+};
+
+
+
+
+
+//dashboard stats
+exports.getDashboardStats = async (req, res) => {
+  const userId = req.user._id;
+  const cacheKey = `dashboard:${userId.toString()}`;
+
+  try {
+    // 1. Check Cache
+    const cachedData = await redisClient.get(cacheKey);
+    if (cachedData) return res.json(JSON.parse(cachedData));
+
+    // 2. Pure Aggregation Pipeline
+    const stats = await Lead.aggregate([
+      { $match: { assignedTo: userId } },
+      {
+        $facet: {
+          // Count by Status
+          statusCounts: [
+            { $group: { _id: "$status", count: { $sum: 1 } } }
+          ],
+          // Count Total
+          totalCount: [{ $count: "total" }]
+        }
+      },
+      {
+        $project: {
+          totalLeads: { $arrayElemAt: ["$totalCount.total", 0] },
+          convertedCount: {
+            $filter: { input: "$statusCounts", as: "s", cond: { $eq: ["$$s._id", "CONVERTED"] } }
+          },
+          activeCount: {
+            $filter: { input: "$statusCounts", as: "s", cond: { $eq: ["$$s._id", "INTERESTED"] } }
+          }
+        }
+      },
+      {
+        $addFields: {
+          totalLeads: { $ifNull: ["$totalLeads", 0] },
+          convertedLeads: { $ifNull: [{ $arrayElemAt: ["$convertedCount.count", 0] }, 0] },
+          activeLeads: { $ifNull: [{ $arrayElemAt: ["$activeCount.count", 0] }, 0] }
+        }
+      },
+      {
+        $project: {
+          totalLeads: 1,
+          activeLeads: 1,
+          conversionRate: {
+            $cond: [
+              { $gt: ["$totalLeads", 0] },
+              { $multiply: [{ $divide: ["$convertedLeads", "$totalLeads"] }, 100] },
+              0
+            ]
+          }
+        }
+      }
+    ]);
+
+    const finalResult = stats[0] || { totalLeads: 0, activeLeads: 0, conversionRate: 0 };
+    finalResult.lastUpdated = new Date();
+
+    // 3. Cache and Return
+    await redisClient.setEx(cacheKey, 600, JSON.stringify(finalResult));
+    res.json(finalResult);
+
+  } catch (error) {
+    res.status(500).json({ message: "Aggregation failed", error: error.message });
+  }
+};
+

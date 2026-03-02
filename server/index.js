@@ -1,13 +1,12 @@
+require("dotenv").config()
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const dotenv = require('dotenv');
 const authRoutes = require('./routes/authRoutes');
 const leadRoutes = require("./routes/leadRoutes")
 
-
-dotenv.config();
-
+    
 const app = express();
 
 // 1. GLOBAL MIDDLEWARE
